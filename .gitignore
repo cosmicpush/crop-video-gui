@@ -1,0 +1,39 @@
+# Byte-compiled / interpreter files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# PyInstaller / build outputs
+build/
+dist/
+*.spec
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.Spotlight-V100
+.Trashes
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# Application outputs
+videos/
+output/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+.coverage*
+
+# Logs
+*.log
+
