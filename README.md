@@ -5,7 +5,7 @@
 
   **A powerful cross-platform video cropping tool with batch processing**
 
-  [![Release](https://img.shields.io/github/v/release/yourusername/crop-video-gui)](https://github.com/yourusername/crop-video-gui/releases)
+  [![Release](https://img.shields.io/github/v/release/cosmicpush/crop-video-gui)](https://github.com/cosmicpush/crop-video-gui/releases)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 </div>
@@ -31,8 +31,8 @@ Crop Video GUI is a professional desktop application for batch video cropping wi
 
 **Get the latest release for your platform:**
 
-- [Windows (EXE)](https://github.com/yourusername/crop-video-gui/releases/latest) - Download `CropVideoGUI-windows.zip`
-- [macOS (DMG)](https://github.com/yourusername/crop-video-gui/releases/latest) - Download `CropVideoGUI-macos.dmg`
+- [Windows (EXE)](https://github.com/cosmicpush/crop-video-gui/releases/latest) - Download `CropVideoGUI-windows.zip`
+- [macOS (DMG)](https://github.com/cosmicpush/crop-video-gui/releases/latest) - Download `CropVideoGUI-macos.dmg`
 
 ### Installation
 
@@ -96,7 +96,7 @@ Crop Video GUI is a professional desktop application for batch video cropping wi
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/crop-video-gui.git
+git clone https://github.com/cosmicpush/crop-video-gui.git
 cd crop-video-gui
 
 # Create virtual environment
