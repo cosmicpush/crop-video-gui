@@ -518,7 +518,7 @@ class BatchVideoCropperGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Batch Video Cropper")
-        self.root.geometry("700x500")
+        self.root.geometry("900x750")
         self.root.resizable(True, True)
 
         # Variables
@@ -531,6 +531,7 @@ class BatchVideoCropperGUI:
         self.is_processing = False
         self.gpu_available = {}
         self.active_cropper: Optional[InteractiveVideoCropper] = None
+        self.crop_data: dict = {}  # Store crop boundaries for each video file
 
         self.setup_ui()
         self.check_gpu_availability()
@@ -647,10 +648,10 @@ class BatchVideoCropperGUI:
         log_frame.rowconfigure(0, weight=1)
         main_frame.rowconfigure(row, weight=1)
 
-        self.log_text = tk.Text(log_frame, height=20, wrap=tk.WORD, state='disabled',
+        self.log_text = tk.Text(log_frame, height=15, wrap=tk.WORD, state='disabled',
                                 bg='#f0f0f0', fg='black', relief=tk.SUNKEN, borderwidth=1,
                                 font=('Courier', 9))
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
 
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
@@ -836,6 +837,85 @@ class BatchVideoCropperGUI:
 
         return True
 
+    def collect_all_crop_boundaries(self) -> bool:
+        """
+        Collect crop boundaries for all videos before processing.
+        Returns True if all boundaries were collected, False if user cancelled.
+        """
+        self.crop_data = {}
+        total_files = len(self.video_files)
+
+        self.log_message("="*60)
+        self.log_message("STEP 1: Collecting crop boundaries for all videos...")
+        self.log_message("="*60)
+
+        for index, video_file in enumerate(self.video_files):
+            self.progress_label.config(
+                text=f"Selecting crop boundaries {index + 1}/{total_files}: {video_file.name}"
+            )
+            self.log_message(f"\n[{index + 1}/{total_files}] Select crop boundaries for: {video_file.name}")
+
+            # Update progress bar
+            self.progress_bar['value'] = index
+            self.root.update()
+
+            # Create a temporary cropper just for boundary selection
+            try:
+                temp_cropper = InteractiveVideoCropper(
+                    input_path=str(video_file),
+                    output_path="",  # Not needed for boundary selection
+                    frame_ts=None,
+                    target_res=None,  # Not needed for boundary selection
+                    progress_callback=None,
+                    use_gpu=False
+                )
+
+                # Get video info and extract preview frame
+                duration, dims = temp_cropper.get_video_info()
+                if not dims:
+                    self.log_message(f"✗ ERROR: Could not determine dimensions for {video_file.name}")
+                    return False
+
+                timestamp = duration / 2.0 if duration else 1.0
+
+                with tempfile.TemporaryDirectory(prefix="crop_preview_") as tmpdir:
+                    frame_path = os.path.join(tmpdir, "preview_frame.jpg")
+                    self.log_message(f"Extracting preview frame at {timestamp:.2f}s...")
+
+                    if not temp_cropper.extract_frame(timestamp, frame_path):
+                        self.log_message(f"✗ ERROR: Could not extract frame from {video_file.name}")
+                        return False
+
+                    # Let user select crop boundaries
+                    roi = temp_cropper.select_crop_boundaries(frame_path)
+
+                    if not roi:
+                        self.log_message(f"⚠ Crop selection cancelled for {video_file.name}")
+                        self.log_message("Aborting batch processing.")
+                        return False
+
+                    # Store the crop data for this file
+                    x, y, w, h = roi
+                    self.crop_data[str(video_file)] = {
+                        'x': x,
+                        'y': y,
+                        'w': w,
+                        'h': h
+                    }
+                    self.log_message(f"✓ Crop area saved: x={x}, y={y}, w={w}, h={h}")
+
+            except Exception as e:
+                self.log_message(f"✗ ERROR: Failed to process {video_file.name}: {str(e)}")
+                logging.error(f"Error during boundary selection for {video_file.name}", exc_info=True)
+                return False
+
+        self.progress_bar['value'] = total_files
+        self.log_message("\n" + "="*60)
+        self.log_message(f"✓ All crop boundaries collected for {total_files} videos!")
+        self.log_message("="*60)
+
+        return True
+
     def start_processing(self):
         """Start the batch processing"""
         if not self.validate_inputs():
@@ -854,16 +934,23 @@ class BatchVideoCropperGUI:
         self.progress_bar['maximum'] = len(self.video_files)
         self.progress_bar['value'] = 0
 
-        self.log_message("="*60)
-        self.log_message("Starting batch processing...")
-        self.log_message("="*60)
         self.save_user_settings()
 
-        # Process files
+        # First, collect all crop boundaries
+        if not self.collect_all_crop_boundaries():
+            # User cancelled or error occurred
+            self.finish_processing()
+            return
+
+        # Now process all files with the collected boundaries
+        self.log_message("\n" + "="*60)
+        self.log_message("STEP 2: Processing all videos...")
+        self.log_message("="*60)
+        self.progress_bar['value'] = 0
         self.process_next_file()
 
     def process_next_file(self):
-        """Process the next video file in the queue"""
+        """Process the next video file in the queue using pre-collected crop data"""
         if not self.is_processing or self.current_file_index >= len(self.video_files):
             self.finish_processing()
             return
@@ -872,9 +959,23 @@ class BatchVideoCropperGUI:
         total_files = len(self.video_files)
 
         self.progress_label.config(
-            text=f"Processing {self.current_file_index + 1}/{total_files}: {current_file.name}"
+            text=f"Encoding {self.current_file_index + 1}/{total_files}: {current_file.name}"
         )
-        self.log_message(f"\n[{self.current_file_index + 1}/{total_files}] Processing: {current_file.name}")
+        self.log_message(f"\n[{self.current_file_index + 1}/{total_files}] Encoding: {current_file.name}")
+
+        # Get the pre-collected crop data for this file
+        crop_info = self.crop_data.get(str(current_file))
+        if not crop_info:
+            self.log_message(f"✗ ERROR: No crop data found for {current_file.name}")
+            self.current_file_index += 1
+            self.root.after(100, self.process_next_file)
+            return
+
+        x = crop_info['x']
+        y = crop_info['y']
+        w = crop_info['w']
+        h = crop_info['h']
+        self.log_message(f"Using crop area: x={x}, y={y}, w={w}, h={h}")
 
         # Generate output filename
         output_file = Path(self.output_dir.get()) / f"{current_file.stem}_cropped{current_file.suffix}"
@@ -882,7 +983,7 @@ class BatchVideoCropperGUI:
         # Get target resolution (empty string if not set)
         target_res = self.target_resolution.get().strip() if self.target_resolution.get().strip() else None
 
-        # Update the GUI before opening OpenCV window
+        # Update the GUI
         self.root.update()
 
         success = False
@@ -909,21 +1010,106 @@ class BatchVideoCropperGUI:
             self.active_cropper = InteractiveVideoCropper(
                 input_path=str(current_file),
                 output_path=str(output_file),
-                frame_ts=None,  # Use middle of video
+                frame_ts=None,
                 target_res=target_res,
                 progress_callback=progress_callback,
                 use_gpu=self.use_gpu.get()
             )
 
-            # Run the cropper directly (OpenCV needs main thread)
-            success, cancelled = self.active_cropper.run()
+            # Get video info to set duration for progress tracking
+            duration, dims = self.active_cropper.get_video_info()
+            self.active_cropper.total_duration = duration
 
-            if cancelled:
-                self.log_message(f"⚠ Cancelled: {current_file.name}")
-            elif success:
-                self.log_message(f"✓ Completed: {current_file.name}")
+            if not dims:
+                self.log_message(f"✗ ERROR: Could not determine video dimensions")
+                success = False
             else:
-                self.log_message(f"✗ ERROR: Failed to process {current_file.name}")
+                # Build the filter string using the pre-collected crop data
+                filter_str = self.active_cropper.build_filter_string(x, y, w, h)
+                self.log_message(f"Generated ffmpeg filter: '{filter_str}'")
+
+                # Build ffmpeg command
+                if self.use_gpu.get():
+                    available_encoders = InteractiveVideoCropper.detect_gpu_encoders()
+                    if available_encoders:
+                        gpu_type, encoder = next(iter(available_encoders.items()))
+                        self.log_message(f"Using GPU acceleration: {gpu_type.upper()} ({encoder})")
+                        cmd = ["ffmpeg", "-i", str(current_file), "-vf", filter_str,
+                               "-c:v", encoder, "-preset", "medium", "-b:v", "10M",
+                               "-c:a", "copy", "-y", str(output_file)]
+                    else:
+                        self.log_message("GPU requested but not available, using CPU")
+                        cmd = ["ffmpeg", "-i", str(current_file), "-vf", filter_str,
+                               "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                               "-c:a", "copy", "-y", str(output_file)]
+                else:
+                    cmd = ["ffmpeg", "-i", str(current_file), "-vf", filter_str,
+                           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                           "-c:a", "copy", "-y", str(output_file)]
+
+                self.log_message("Starting ffmpeg encoding...")
+
+                # Execute ffmpeg
+                startupinfo = None
+                if sys.platform == 'win32':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                proc = None
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        startupinfo=startupinfo,
+                        bufsize=1,
+                    )
+                    self.active_cropper.ffmpeg_process = proc
+
+                    if proc.stdout:
+                        for line in iter(proc.stdout.readline, ''):
+                            if self.active_cropper.cancel_requested:
+                                break
+                            stripped = line.strip()
+                            if not stripped:
+                                continue
+                            if progress_callback:
+                                progress_callback(stripped)
+
+                    if self.active_cropper.cancel_requested:
+                        cancelled = True
+                        if proc.poll() is None:
+                            proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            logging.warning("ffmpeg did not terminate gracefully; forcing kill.")
+                            proc.kill()
+                            proc.wait()
+                    else:
+                        proc.wait()
+
+                    success = (proc.returncode == 0) and not cancelled
+
+                finally:
+                    if proc and proc.stdout:
+                        proc.stdout.close()
+                    self.active_cropper.ffmpeg_process = None
+
+                if cancelled:
+                    self.log_message(f"⚠ Cancelled: {current_file.name}")
+                    if os.path.exists(str(output_file)):
+                        try:
+                            os.remove(str(output_file))
+                            self.log_message("Removed partial output file.")
+                        except OSError as exc:
+                            logging.warning(f"Could not remove partial output: {exc}")
+                elif success:
+                    self.log_message(f"✓ Completed: {current_file.name}")
+                else:
+                    self.log_message(f"✗ ERROR: Failed to encode {current_file.name}")
 
         except Exception as e:
             self.log_message(f"✗ ERROR: Failed to process {current_file.name}: {str(e)}")
@@ -934,7 +1120,7 @@ class BatchVideoCropperGUI:
         finally:
             self.active_cropper = None
 
-        # Update GUI after OpenCV window closes
+        # Update GUI
         self.root.update()
 
         # Update progress and move to next file
