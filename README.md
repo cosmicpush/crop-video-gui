@@ -26,13 +26,19 @@ Crop Video GUI is a professional desktop application for batch video cropping wi
 - **Multiple Formats** - Supports MP4, MKV, WebM, AVI, MOV, FLV, and WMV
 - **Session Memory** - Remembers your last input/output directories
 - **Progress Tracking** - Real-time ffmpeg progress with time estimates
+- **Resume Capability** - Skip problematic videos and resume from where you left off
+- **Crop Blueprints** - Save crop measurements for later use
+
+### Platform Support
+
+- **Windows** - Pre-built executables available for download
+- **macOS/Linux** - Run from source (Python 3.10+ required)
 
 ## Download
 
-**Get the latest release for your platform:**
+**Get the latest release:**
 
 - [Windows (EXE)](https://github.com/cosmicpush/crop-video-gui/releases/latest) - Download `CropVideoGUI-windows.zip`
-- [macOS (DMG)](https://github.com/cosmicpush/crop-video-gui/releases/latest) - Download `CropVideoGUI-macos.dmg`
 
 ### Installation
 
@@ -42,15 +48,21 @@ Crop Video GUI is a professional desktop application for batch video cropping wi
 3. Run `CropVideoGUI.exe`
 
 **macOS:**
-1. Download `CropVideoGUI-macos.dmg`
-2. Open the DMG file
-3. Drag the app to Applications
-4. Right-click and select "Open" (first time only)
+macOS users can run the application directly from source:
+
+```bash
+git clone https://github.com/cosmicpush/crop-video-gui.git
+cd crop-video-gui
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 crop_gui.py
+```
 
 **Requirements:**
 - **ffmpeg and ffprobe** must be installed on your system
-  - macOS: `brew install ffmpeg`
   - Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+  - macOS: `brew install ffmpeg` (for running from source)
 
 ## How to Use
 
@@ -124,19 +136,24 @@ python -m unittest tests.test_build_filter_string
 
 ### Local Build
 
-**Windows:**
-```bash
-python -m PyInstaller --clean --noconfirm --name CropVideoGUI --onefile --windowed --icon=assets/logo.png crop_gui.py
-```
+You can build the application locally on any platform:
 
-**macOS:**
 ```bash
-python -m PyInstaller --clean --noconfirm --name CropVideoGUI --windowed --icon=assets/logo.png crop_gui.py
+# Clone the repository
+git clone https://github.com/cosmicpush/crop-video-gui.git
+cd crop-video-gui
+
+# Install dependencies
+pip install -r requirements.txt
+pip install pyinstaller  # For creating executables
+
+# Build the executable (optional)
+pyinstaller --clean --noconfirm --name CropVideoGUI --onefile --windowed --icon=assets/logo.png crop_gui.py
 ```
 
 ### Automated Releases
 
-The project includes GitHub Actions for automated builds:
+The project includes GitHub Actions for automated Windows builds:
 
 1. **Create a version tag:**
    ```bash
@@ -145,10 +162,9 @@ The project includes GitHub Actions for automated builds:
    ```
 
 2. **GitHub Actions automatically:**
-   - Converts `assets/logo.png` to platform-specific icons
+   - Converts `assets/logo.png` to Windows ICO format
    - Builds Windows EXE with embedded icon
-   - Builds macOS DMG with custom icon and background
-   - Publishes release with both binaries
+   - Publishes release with the Windows binary
 
 ## GPU Support
 

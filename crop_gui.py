@@ -210,18 +210,38 @@ class InteractiveVideoCropper:
             return 900
 
     def _mouse_callback(self, event, x, y, flags, param):
+        # Get canvas dimensions (including rulers)
         if self.display_img is not None:
-            disp_h, disp_w = self.display_img.shape[:2]
-            x = max(0, min(x, disp_w - 1))
-            y = max(0, min(y, disp_h - 1))
+            canvas_w = self.display_img.shape[1] + 80  # Add vertical ruler width
+            canvas_h = self.display_img.shape[0] + 80  # Add horizontal ruler height
+        else:
+            return
 
-        self.current_mouse_x = x
-        self.current_mouse_y = y
+        # Check if click is on close button
+        close_btn_size = 30
+        close_btn_x = canvas_w - close_btn_size - 10
+        close_btn_y = 10
 
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.y_top = y
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            self.y_bottom = y
+            # Check if close button was clicked
+            if (close_btn_x <= x <= close_btn_x + close_btn_size and
+                close_btn_y <= y <= close_btn_y + close_btn_size):
+                # Signal to close the window
+                self.y_top = self.y_bottom = self.x_left = self.x_right = -999
+                return
+
+        # Ensure coordinates are within image area (excluding rulers)
+        if x >= 80 and y >= 80:  # Account for rulers
+            img_x = x - 80
+            img_y = y - 80
+            if img_x >= 0 and img_y < self.display_img.shape[1] and img_y >= 0 and img_y < self.display_img.shape[0]:
+                self.current_mouse_x = img_x
+                self.current_mouse_y = img_y
+
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    self.y_top = img_y
+                elif event == cv2.EVENT_RBUTTONDOWN:
+                    self.y_bottom = img_y
 
     def _draw_ruler_and_guides(self, image):
         h, w = image.shape[:2]
@@ -292,20 +312,44 @@ class InteractiveVideoCropper:
 
         canvas = np.vstack([top_row, bottom_row])
 
+        # Add a close button in the top-right corner
+        close_btn_size = 30
+        close_btn_x = canvas.shape[1] - close_btn_size - 10
+        close_btn_y = 10
+        cv2.rectangle(canvas, (close_btn_x, close_btn_y),
+                     (close_btn_x + close_btn_size, close_btn_y + close_btn_size),
+                     (0, 0, 0), -1)
+        cv2.rectangle(canvas, (close_btn_x, close_btn_y),
+                     (close_btn_x + close_btn_size, close_btn_y + close_btn_size),
+                     (100, 100, 100), 2)
+        # Draw X
+        cv2.line(canvas, (close_btn_x + 8, close_btn_y + 8),
+                (close_btn_x + close_btn_size - 8, close_btn_y + close_btn_size - 8),
+                (255, 255, 255), 2)
+        cv2.line(canvas, (close_btn_x + close_btn_size - 8, close_btn_y + 8),
+                (close_btn_x + 8, close_btn_y + close_btn_size - 8),
+                (255, 255, 255), 2)
+
         instructions = [
+            "Click X button or press Q to close",
             "L-click: Set TOP",
             "R-click: Set BOTTOM",
             "A key: Set LEFT (cursor)",
             "D key: Set RIGHT (cursor)",
-            "ENTER: Confirm | ESC: Reset"
+            "ENTER: Confirm | ESC: Cancel"
         ]
 
         base_x = vertical_ruler_width + 10
         base_y = horizontal_ruler_height + 30
         for i, text in enumerate(instructions):
             y_pos = base_y + i * 25
-            cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            # Make the close instruction more prominent
+            if i == 0:
+                cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (0, 0, 0), 4, cv2.LINE_AA)
+                cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (255, 100, 100), 2, cv2.LINE_AA)
+            else:
+                cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(canvas, text, (base_x, y_pos), font, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
         return canvas
 
@@ -346,25 +390,48 @@ class InteractiveVideoCropper:
 
         window_name = "Select Crop Boundaries"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(window_name, self._mouse_callback)
 
-        # Try to bring window to front (platform specific)
+        # Make window closable on macOS
         try:
+            # On macOS, enable the close button
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_ASPECT_RATIO, cv2.WINDOW_KEEPRATIO)
+            # Try to bring window to front
             cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+            # Immediately turn off topmost so it's not always on top
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
         except:
             pass
+
+        cv2.setMouseCallback(window_name, self._mouse_callback)
+
+        # Add instruction text about closing
+        logging.info("Window opened. Press Enter to confirm, Esc to cancel, or close the window with the X button")
 
         while True:
             frame_with_guides = self._draw_ruler_and_guides(self.display_img.copy())
 
             cv2.imshow(window_name, frame_with_guides)
-            key = cv2.waitKey(1) & 0xFF
+            key = cv2.waitKey(50) & 0xFF  # Increased wait time for better responsiveness
 
-            if key == 13:
+            # Check if window was closed by user (cross button on Windows/Linux)
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                logging.info("Window closed by user")
+                self.y_top = self.y_bottom = self.x_left = self.x_right = None
+                break
+
+            # Check if close button was clicked (special value -999)
+            if self.y_top == -999:
+                logging.info("Close button clicked")
+                self.y_top = self.y_bottom = self.x_left = self.x_right = None
+                break
+
+            if key == 13:  # Enter key
                 if None in (self.y_top, self.y_bottom, self.x_left, self.x_right):
                     logging.warning("All four boundaries (TOP, BOTTOM, LEFT, RIGHT) must be set before confirming.")
-                else: break
-            elif key == 27:
+                else:
+                    break
+            elif key == 27:  # Escape key
+                logging.info("Crop selection cancelled by user (Esc key)")
                 self.y_top = self.y_bottom = self.x_left = self.x_right = None
                 break
             elif key in (ord('a'), ord('A')):
@@ -373,10 +440,22 @@ class InteractiveVideoCropper:
             elif key in (ord('d'), ord('D')):
                 self.x_right = self.current_mouse_x
                 logging.info(f"Set RIGHT boundary to {int(self.x_right / self.scale_factor)}px")
+            elif key == ord('q') or key == ord('Q'):
+                # Added Q key as another way to close
+                logging.info("Crop selection cancelled by user (Q key)")
+                self.y_top = self.y_bottom = self.x_left = self.x_right = None
+                break
 
-        # Ensure window is destroyed and cleared
-        cv2.destroyWindow(window_name)
-        cv2.waitKey(1)
+        # Properly clean up windows
+        try:
+            cv2.destroyWindow(window_name)
+            # Give it time to close properly
+            cv2.waitKey(1)
+            cv2.waitKey(1)
+            # Destroy any remaining windows
+            cv2.destroyAllWindows()
+        except Exception as e:
+            logging.warning(f"Error closing window: {e}")
 
         if None in (self.y_top, self.y_bottom, self.x_left, self.x_right):
             return None
@@ -572,6 +651,14 @@ class BatchVideoCropperGUI:
         self.root.geometry("900x750")
         self.root.resizable(True, True)
 
+        # Set window icon
+        try:
+            icon_path = Path(__file__).parent / "assets" / "logo.png"
+            if icon_path.exists():
+                self.root.iconphoto(True, tk.PhotoImage(file=str(icon_path)))
+        except Exception as e:
+            logging.warning(f"Could not load window icon: {e}")
+
         # Variables
         self.input_dir = tk.StringVar()
         self.output_dir = tk.StringVar()
@@ -728,7 +815,14 @@ class BatchVideoCropperGUI:
                                     command=self.stop_processing, state='disabled')
         self.stop_btn.grid(row=0, column=2, padx=5)
 
-        ttk.Button(button_frame, text="Exit", command=self.handle_exit).grid(row=0, column=3, padx=5)
+        self.clear_progress_btn = ttk.Button(
+            button_frame,
+            text="Clear Progress",
+            command=self.clear_progress
+        )
+        self.clear_progress_btn.grid(row=0, column=3, padx=5)
+
+        ttk.Button(button_frame, text="Exit", command=self.handle_exit).grid(row=0, column=4, padx=5)
 
     def check_gpu_availability(self):
         """Check if GPU encoders are available"""
@@ -795,6 +889,29 @@ class BatchVideoCropperGUI:
             self.root.after(200, self._await_shutdown)
         else:
             self.root.destroy()
+
+    def clear_progress(self):
+        """Clear saved progress and crop data"""
+        if self.is_processing:
+            messagebox.showwarning("Busy", "Cannot clear progress while processing videos.")
+            return
+
+        if messagebox.askyesno("Clear Progress",
+            "This will clear all saved crop selection progress.\n\n"
+            "Are you sure you want to continue?"):
+            # Clear the progress snapshot file
+            try:
+                snapshot_path = self.APP_CONFIG_DIR / "crop_progress_snapshot.json"
+                if snapshot_path.exists():
+                    snapshot_path.unlink()
+                    self.log_message("✓ Cleared saved progress")
+                else:
+                    self.log_message("No saved progress found to clear")
+            except Exception as e:
+                self.log_message(f"⚠ Could not clear progress: {str(e)}")
+
+            # Clear in-memory crop data
+            self.crop_data = {}
 
     @staticmethod
     def _parse_ffmpeg_time(line: str) -> Optional[float]:
@@ -899,19 +1016,33 @@ class BatchVideoCropperGUI:
 
         return True
 
-    def collect_all_crop_boundaries(self) -> bool:
+    def collect_all_crop_boundaries(self, resume_from_index: int = 0, skip_problematic: bool = True) -> bool:
         """
         Collect crop boundaries for all videos before processing.
         Returns True if all boundaries were collected, False if user cancelled.
+
+        Args:
+            resume_from_index: Index to resume from (for recovery after failures)
+            skip_problematic: If True, skip problematic videos and continue
         """
-        self.crop_data = {}
+        # Load existing crop data if resuming
+        if resume_from_index > 0 and self.crop_data:
+            self.log_message(f"\nResuming from video {resume_from_index + 1}...")
+            self.log_message(f"Already have crop data for {len(self.crop_data)} videos")
+
         total_files = len(self.video_files)
+        successful_crops = 0
+        skipped_videos = []
+        user_cancelled = False
 
         self.log_message("="*60)
         self.log_message("STEP 1: Collecting crop boundaries for all videos...")
+        if skip_problematic:
+            self.log_message("Mode: Skip problematic videos and continue")
         self.log_message("="*60)
 
-        for index, video_file in enumerate(self.video_files):
+        for index in range(resume_from_index, total_files):
+            video_file = self.video_files[index]
             self.progress_label.config(
                 text=f"Selecting crop boundaries {index + 1}/{total_files}: {video_file.name}"
             )
@@ -921,68 +1052,180 @@ class BatchVideoCropperGUI:
             self.progress_bar['value'] = index
             self.root.update()
 
+            # Check if we already have crop data for this video (resuming)
+            if str(video_file) in self.crop_data:
+                self.log_message(f"✓ Already have crop data for {video_file.name}, skipping...")
+                successful_crops += 1
+                continue
+
             # Create a temporary cropper just for boundary selection
-            try:
-                temp_cropper = InteractiveVideoCropper(
-                    input_path=str(video_file),
-                    output_path="",  # Not needed for boundary selection
-                    frame_ts=None,
-                    target_res=None,  # Not needed for boundary selection
-                    progress_callback=None,
-                    use_gpu=False
-                )
+            max_retries = 3
+            success = False
 
-                # Get video info and extract preview frame
-                duration, dims = temp_cropper.get_video_info()
-                if not dims:
-                    self.log_message(f"✗ ERROR: Could not determine dimensions for {video_file.name}")
+            for attempt in range(max_retries):
+                try:
+                    temp_cropper = InteractiveVideoCropper(
+                        input_path=str(video_file),
+                        output_path="",  # Not needed for boundary selection
+                        frame_ts=None,
+                        target_res=None,  # Not needed for boundary selection
+                        progress_callback=None,
+                        use_gpu=False
+                    )
+
+                    # Get video info and extract preview frame
+                    duration, dims = temp_cropper.get_video_info()
+                    if not dims:
+                        self.log_message(f"✗ ERROR: Could not determine dimensions for {video_file.name}")
+                        break  # No point retrying this
+
+                    src_w, src_h = dims
+                    timestamp = duration / 2.0 if duration else 1.0
+
+                    with tempfile.TemporaryDirectory(prefix="crop_preview_") as tmpdir:
+                        frame_path = os.path.join(tmpdir, "preview_frame.jpg")
+
+                        if attempt > 0:
+                            self.log_message(f"Extracting preview frame at {timestamp:.2f}s... (Attempt {attempt + 1}/{max_retries})")
+                        else:
+                            self.log_message(f"Extracting preview frame at {timestamp:.2f}s...")
+
+                        if not temp_cropper.extract_frame(timestamp, frame_path):
+                            self.log_message(f"✗ ERROR: Could not extract frame from {video_file.name}")
+                            if attempt < max_retries - 1:
+                                self.log_message(f"Retrying in 2 seconds...")
+                                import time
+                                time.sleep(2)  # Wait 2 seconds before retry
+                                continue
+                            break
+
+                        # Let user select crop boundaries
+                        roi = temp_cropper.select_crop_boundaries(frame_path)
+
+                        if not roi:
+                            self.log_message(f"⚠ Crop selection cancelled for {video_file.name}")
+                            user_cancelled = True
+                            break  # User cancelled, don't retry
+
+                        # Store the crop data for this file
+                        x, y, w, h = roi
+                        self.crop_data[str(video_file)] = {
+                            'x': x,
+                            'y': y,
+                            'w': w,
+                            'h': h,
+                            'source_width': src_w,
+                            'source_height': src_h,
+                            'duration_seconds': duration,
+                        }
+                        self.log_message(f"✓ Crop area saved: x={x}, y={y}, w={w}, h={h}")
+                        success = True
+                        successful_crops += 1
+                        break  # Success, move to next video
+
+                except Exception as e:
+                    self.log_message(f"✗ ERROR: Failed to process {video_file.name}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        self.log_message(f"Retrying... (Attempt {attempt + 1}/{max_retries})")
+                        continue
+                    logging.error(f"Error during boundary selection for {video_file.name}", exc_info=True)
+                    if isinstance(e, RuntimeError):
+                        messagebox.showerror("Missing Dependency", str(e))
+                        return False
+
+            # Handle failed attempts
+            if not success:
+                if user_cancelled:
+                    self.log_message("\n" + "="*60)
+                    self.log_message("Crop selection cancelled by user")
+                    self.log_message("="*60)
                     return False
-                src_w, src_h = dims
+                elif skip_problematic:
+                    skipped_videos.append(video_file.name)
+                    self.log_message(f"⚠ Skipping {video_file.name} due to errors")
+                    # Save current progress before skipping
+                    self._save_progress_snapshot()
+                else:
+                    self.log_message("\n" + "="*60)
+                    self.log_message(f"Failed to process {video_file.name}. Aborting.")
+                    self.log_message("="*60)
+                    return False
 
-                timestamp = duration / 2.0 if duration else 1.0
-
-                with tempfile.TemporaryDirectory(prefix="crop_preview_") as tmpdir:
-                    frame_path = os.path.join(tmpdir, "preview_frame.jpg")
-                    self.log_message(f"Extracting preview frame at {timestamp:.2f}s...")
-
-                    if not temp_cropper.extract_frame(timestamp, frame_path):
-                        self.log_message(f"✗ ERROR: Could not extract frame from {video_file.name}")
-                        return False
-
-                    # Let user select crop boundaries
-                    roi = temp_cropper.select_crop_boundaries(frame_path)
-
-                    if not roi:
-                        self.log_message(f"⚠ Crop selection cancelled for {video_file.name}")
-                        self.log_message("Aborting batch processing.")
-                        return False
-
-                    # Store the crop data for this file
-                    x, y, w, h = roi
-                    self.crop_data[str(video_file)] = {
-                        'x': x,
-                        'y': y,
-                        'w': w,
-                        'h': h,
-                        'source_width': src_w,
-                        'source_height': src_h,
-                        'duration_seconds': duration,
-                    }
-                    self.log_message(f"✓ Crop area saved: x={x}, y={y}, w={w}, h={h}")
-
-            except Exception as e:
-                self.log_message(f"✗ ERROR: Failed to process {video_file.name}: {str(e)}")
-                logging.error(f"Error during boundary selection for {video_file.name}", exc_info=True)
-                if isinstance(e, RuntimeError):
-                    messagebox.showerror("Missing Dependency", str(e))
-                return False
-
+        # Final summary
         self.progress_bar['value'] = total_files
         self.log_message("\n" + "="*60)
-        self.log_message(f"✓ All crop boundaries collected for {total_files} videos!")
+
+        if skipped_videos:
+            self.log_message(f"✓ Completed with {successful_crops}/{total_files} videos processed")
+            self.log_message(f"⚠ Skipped {len(skipped_videos)} videos:")
+            for video in skipped_videos:
+                self.log_message(f"  - {video}")
+
+            if not messagebox.askyesno("Videos Skipped",
+                f"Successfully processed {successful_crops} videos, but {len(skipped_videos)} videos failed.\n\n"
+                "Do you want to continue with the successful videos?\n\n"
+                "Click 'Yes' to continue or 'No' to cancel."):
+                return False
+        else:
+            self.log_message(f"✓ All crop boundaries collected for {total_files} videos!")
+
         self.log_message("="*60)
 
+        # Save final crop data
+        self._save_progress_snapshot()
         return True
+
+    def _save_progress_snapshot(self):
+        """Save a snapshot of current crop progress to a temporary file"""
+        try:
+            snapshot_path = self.APP_CONFIG_DIR / "crop_progress_snapshot.json"
+            self.APP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+            # Create a simplified version for quick saving
+            snapshot = {
+                "input_directory": self.input_dir.get(),
+                "output_directory": self.output_dir.get(),
+                "target_resolution": self.target_resolution.get(),
+                "crop_data": self.crop_data,
+                "video_files": [str(f) for f in self.video_files],
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+
+            with open(snapshot_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+
+        except Exception as e:
+            logging.warning(f"Could not save progress snapshot: {e}")
+
+    def _load_progress_snapshot(self) -> Optional[int]:
+        """Load progress snapshot and return the index to resume from"""
+        snapshot_path = self.APP_CONFIG_DIR / "crop_progress_snapshot.json"
+
+        if not snapshot_path.exists():
+            return None
+
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                snapshot = json.load(f)
+
+            # Check if this snapshot matches current input directory
+            if snapshot.get("input_directory") != self.input_dir.get():
+                return None
+
+            # Load crop data
+            self.crop_data = snapshot.get("crop_data", {})
+
+            # Find the first video that doesn't have crop data
+            for i, video_file in enumerate(self.video_files):
+                if str(video_file) not in self.crop_data:
+                    return i
+
+            # All videos have crop data
+            return len(self.video_files)
+
+        except Exception as e:
+            logging.warning(f"Could not load progress snapshot: {e}")
+            return None
 
     def save_crop_blueprint(self):
         """Collect crop bounds and write them to a JSON blueprint without encoding."""
@@ -996,12 +1239,28 @@ class BatchVideoCropperGUI:
         if not self.video_files:
             return
 
+        # Check if there's a progress snapshot to resume from
+        resume_index = self._load_progress_snapshot()
+
+        if resume_index is not None and resume_index > 0:
+            if messagebox.askyesno("Resume Available",
+                f"Found crop data for {resume_index} out of {len(self.video_files)} videos.\n\n"
+                "Do you want to resume from where you left off?"):
+                pass  # Crop data already loaded
+            else:
+                self.crop_data = {}
+                try:
+                    (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+                except:
+                    pass
+
         # Temporarily lock down inputs to avoid changes mid-collection
         self.save_blueprint_btn.config(state='disabled')
         self.start_btn.config(state='disabled')
         self.input_entry.config(state='disabled')
         self.output_entry.config(state='disabled')
         self.res_entry.config(state='disabled')
+        self.clear_progress_btn.config(state='disabled')
         self.stop_btn.config(state='disabled')
 
         self.progress_bar['maximum'] = len(self.video_files)
@@ -1012,8 +1271,13 @@ class BatchVideoCropperGUI:
         self.log_message("="*60)
 
         try:
-            if not self.collect_all_crop_boundaries():
+            if not self.collect_all_crop_boundaries(resume_from_index=resume_index or 0):
                 self.progress_label.config(text="Blueprint capture cancelled")
+                # Clear progress snapshot since user cancelled
+                try:
+                    (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+                except:
+                    pass
                 return
 
             input_root = Path(self.input_dir.get())
@@ -1055,14 +1319,22 @@ class BatchVideoCropperGUI:
                 messagebox.showerror("Save Failed", f"Unable to write blueprint file:\n{exc}")
                 return
 
-            self.progress_label.config(text=f"Saved blueprint for {len(self.video_files)} video(s)")
+            self.progress_label.config(text=f"Saved blueprint for {len(self.crop_data)} video(s)")
             self.log_message(f"✓ Crop blueprint saved to {json_path}")
             messagebox.showinfo("Blueprint Saved", f"Crop blueprint saved to:\n{json_path}")
+
+            # Clear progress snapshot after successful save
+            try:
+                (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+            except:
+                pass
+
         finally:
             # Restore UI state
             if not self.is_processing:
                 self.start_btn.config(state='normal')
             self.save_blueprint_btn.config(state='normal')
+            self.clear_progress_btn.config(state='normal')
             self.input_entry.config(state='readonly')
             self.output_entry.config(state='readonly')
             self.res_entry.config(state='normal')
@@ -1077,6 +1349,40 @@ class BatchVideoCropperGUI:
         """Start the batch processing"""
         if not self.validate_inputs():
             return
+
+        # Check if there's a progress snapshot to resume from
+        resume_index = self._load_progress_snapshot()
+
+        if resume_index is not None and resume_index > 0:
+            if resume_index >= len(self.video_files):
+                # All videos have crop data, just ask if they want to proceed with encoding
+                if messagebox.askyesno("Resume Available",
+                    f"Found crop data for all {len(self.video_files)} videos.\n\n"
+                    "Do you want to proceed directly to encoding?"):
+                    self.crop_data = self._load_crop_data_from_snapshot()
+                    self.start_encoding_phase()
+                    return
+                else:
+                    # Clear the snapshot and start fresh
+                    try:
+                        (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+                    except:
+                        pass
+            else:
+                # Partial progress found
+                if messagebox.askyesno("Resume Available",
+                    f"Found crop data for {resume_index} out of {len(self.video_files)} videos.\n\n"
+                    "Do you want to resume from where you left off?\n\n"
+                    "Click 'Yes' to resume or 'No' to start fresh."):
+                    # Already loaded crop data in _load_progress_snapshot
+                    pass
+                else:
+                    # Clear and start fresh
+                    self.crop_data = {}
+                    try:
+                        (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+                    except:
+                        pass
 
         self.is_processing = True
         self.current_file_index = 0
@@ -1094,18 +1400,39 @@ class BatchVideoCropperGUI:
 
         self.save_user_settings()
 
-        # First, collect all crop boundaries
-        if not self.collect_all_crop_boundaries():
+        # First, collect all crop boundaries (with resume capability)
+        if not self.collect_all_crop_boundaries(resume_from_index=resume_index or 0):
             # User cancelled or error occurred
             self.finish_processing()
             return
 
         # Now process all files with the collected boundaries
+        self.start_encoding_phase()
+
+    def start_encoding_phase(self):
+        """Start the encoding phase after crop boundaries are collected"""
         self.log_message("\n" + "="*60)
         self.log_message("STEP 2: Processing all videos...")
         self.log_message("="*60)
         self.progress_bar['value'] = 0
+
+        # Clear the progress snapshot after successful crop collection
+        try:
+            (self.APP_CONFIG_DIR / "crop_progress_snapshot.json").unlink()
+        except:
+            pass
+
         self.process_next_file()
+
+    def _load_crop_data_from_snapshot(self) -> dict:
+        """Load crop data from snapshot file"""
+        snapshot_path = self.APP_CONFIG_DIR / "crop_progress_snapshot.json"
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                snapshot = json.load(f)
+            return snapshot.get("crop_data", {})
+        except:
+            return {}
 
     def process_next_file(self):
         """Process the next video file in the queue using pre-collected crop data"""

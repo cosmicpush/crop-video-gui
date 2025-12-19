@@ -9,59 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    steps:
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          body: |
-            ## Crop Video GUI ${{ github.ref_name }}
-
-            ### Downloads
-            - **Windows**: Download `CropVideoGUI-windows.zip`
-            - **macOS**: Download `CropVideoGUI-macos.dmg`
-
-            ### Installation
-            **Windows:**
-            1. Download and extract the ZIP file
-            2. Run `CropVideoGUI.exe`
-
-            **macOS:**
-            1. Download the DMG file
-            2. Open the DMG and drag the app to Applications
-            3. Right-click the app and select "Open" (first time only)
-
-            ### Requirements
-            - ffmpeg and ffprobe must be installed on your system
-              - macOS: `brew install ffmpeg`
-              - Windows: Download from https://ffmpeg.org/download.html
-
-            ### Features
-            - Batch process multiple video formats
-            - Interactive crop selection with visual rulers
-            - Optional target resolution scaling
-            - GPU acceleration support (NVENC, AMF, Quick Sync)
-            - Two-phase workflow: Select all crops first, then batch encode
-
   build-windows:
     name: Build Windows
-    needs: create-release
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -95,98 +44,64 @@ jobs:
         run: |
           Compress-Archive -Path dist\CropVideoGUI.exe -DestinationPath CropVideoGUI-windows.zip
 
-      - name: Upload Windows Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./CropVideoGUI-windows.zip
-          asset_name: CropVideoGUI-windows.zip
-          asset_content_type: application/zip
+          name: windows-artifact
+          path: CropVideoGUI-windows.zip
 
-  build-macos:
-    name: Build macOS
-    needs: create-release
-    runs-on: macos-latest
+  release:
+    name: Create Release and Upload Assets
+    needs: build-windows
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          name: windows-artifact
+          path: .
 
-      - name: Install ImageMagick
-        run: |
-          brew install imagemagick
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## Crop Video GUI ${{ github.ref_name }}
 
-      - name: Create macOS ICNS from logo
-        run: |
-          # Create iconset directory
-          mkdir -p icon.iconset
+            ### Download
+            - **Windows**: Download `CropVideoGUI-windows.zip`
 
-          # Generate all required icon sizes for macOS
-          magick assets/logo.png -resize 16x16     icon.iconset/icon_16x16.png
-          magick assets/logo.png -resize 32x32     icon.iconset/icon_16x16@2x.png
-          magick assets/logo.png -resize 32x32     icon.iconset/icon_32x32.png
-          magick assets/logo.png -resize 64x64     icon.iconset/icon_32x32@2x.png
-          magick assets/logo.png -resize 128x128   icon.iconset/icon_128x128.png
-          magick assets/logo.png -resize 256x256   icon.iconset/icon_128x128@2x.png
-          magick assets/logo.png -resize 256x256   icon.iconset/icon_256x256.png
-          magick assets/logo.png -resize 512x512   icon.iconset/icon_256x256@2x.png
-          magick assets/logo.png -resize 512x512   icon.iconset/icon_512x512.png
-          magick assets/logo.png -resize 1024x1024 icon.iconset/icon_512x512@2x.png
+            ### Installation
+            **Windows:**
+            1. Download and extract the ZIP file
+            2. Run `CropVideoGUI.exe`
 
-          # Convert iconset to icns
-          iconutil -c icns icon.iconset -o icon.icns
+            ### Requirements
+            - ffmpeg and ffprobe must be installed on your system
+              - Windows: Download from https://ffmpeg.org/download.html
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+            ### Features
+            - Batch process multiple video formats (MP4, MKV, WebM, AVI, MOV, FLV, WMV)
+            - Interactive crop selection with visual rulers
+            - Optional target resolution scaling
+            - GPU acceleration support (NVENC, AMF, Quick Sync)
+            - Two-phase workflow: Select all crops first, then batch encode
+            - Resume capability and skip problematic videos
+            - Save crop blueprints for later use
 
-      - name: Build with PyInstaller
-        run: |
-          python -m PyInstaller --clean --noconfirm --name CropVideoGUI --windowed --icon=icon.icns crop_gui.py
-
-      - name: Create DMG
-        run: |
-          # Install create-dmg for better DMG creation
-          brew install create-dmg
-
-          # Create a temporary directory for DMG contents
-          mkdir -p dmg_temp
-          cp -r dist/CropVideoGUI.app dmg_temp/
-
-          # Create the DMG with create-dmg using our custom icon
-          create-dmg \
-            --volname "Crop Video GUI" \
-            --volicon "icon.icns" \
-            --background "assets/logo.png" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "CropVideoGUI.app" 175 120 \
-            --hide-extension "CropVideoGUI.app" \
-            --app-drop-link 425 120 \
-            --no-internet-enable \
-            "CropVideoGUI-macos.dmg" \
-            "dmg_temp/" || \
-          # Fallback to hdiutil if create-dmg fails
-          hdiutil create -volname "Crop Video GUI" \
-            -srcfolder dmg_temp \
-            -ov -format UDZO \
-            "CropVideoGUI-macos.dmg"
-
-      - name: Upload macOS Release Asset
-        uses: actions/upload-release-asset@v1
+            ### macOS Users
+            macOS users can build the application locally:
+            ```bash
+            git clone https://github.com/cosmicpush/crop-video-gui.git
+            cd crop-video-gui
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install -r requirements.txt
+            python3 crop_gui.py
+            ```
+          files: |
+            CropVideoGUI-windows.zip
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./CropVideoGUI-macos.dmg
-          asset_name: CropVideoGUI-macos.dmg
-          asset_content_type: application/x-apple-diskimage
